@@ -1,3 +1,8 @@
+// Grupo 10 — Redes de Computadores
+// Fabio Willian Alves Silva, 251020487
+// Gustavo Vieira de Araujo, 211068440
+// Joao Francisco de Sousa Torres, 251037072
+
 package peer
 
 import (

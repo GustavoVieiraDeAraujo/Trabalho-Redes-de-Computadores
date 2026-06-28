@@ -1,14 +1,22 @@
+// Grupo 10 — Redes de Computadores
+// Fabio Willian Alves Silva, 251020487
+// Gustavo Vieira de Araujo, 211068440
+// Joao Francisco de Sousa Torres, 251037072
+
 package peer
 
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net"
 	"sync"
 	"time"
 
 	"cliente-p2p/protocolo"
 )
+
+const maxTamanhoLinha = 32 * 1024 // 32 KiB — limite definido pela especificação do protocolo
 
 // Direções possíveis de uma conexão P2P.
 const (
@@ -73,9 +81,17 @@ func (c *ConexaoPeer) EscreverJSON(v interface{}) error {
 	return c.escritor.Encode(v)
 }
 
-// LerLinha lê uma linha completa (até '\n') do socket.
+// LerLinha lê uma linha completa (até '\n') do socket e rejeita linhas
+// que ultrapassem o limite de 32 KiB definido pela especificação.
 func (c *ConexaoPeer) LerLinha() ([]byte, error) {
-	return c.leitor.ReadBytes('\n')
+	linha, err := c.leitor.ReadBytes('\n')
+	if err != nil {
+		return nil, err
+	}
+	if len(linha) > maxTamanhoLinha {
+		return nil, fmt.Errorf("linha excede o limite de %d bytes", maxTamanhoLinha)
+	}
+	return linha, nil
 }
 
 // Fechar encerra o socket e sinaliza CanalEncerramento. É seguro chamar
