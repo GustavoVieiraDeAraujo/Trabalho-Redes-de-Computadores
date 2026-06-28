@@ -1,3 +1,8 @@
+// Grupo 10 — Redes de Computadores
+// Fabio Willian Alves Silva, 251020487
+// Gustavo Vieira de Araujo, 211068440
+// Joao Francisco de Sousa Torres, 251037072
+
 // Package protocolo define as estruturas de dados trocadas com o servidor
 // Rendezvous e entre os peers. Os nomes dos campos Go foram traduzidos para
 // português, mas as tags `json` permanecem em inglês porque fazem parte do

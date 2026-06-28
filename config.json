@@ -6,5 +6,6 @@
   "intervalo_ping_s": 30,
   "max_tentativas_reconexao": 5,
   "endereco_rendezvous": "45.171.101.167",
-  "porta_rendezvous": 8080
+  "porta_rendezvous": 8080,
+  "arquivo_log": ""
 }
