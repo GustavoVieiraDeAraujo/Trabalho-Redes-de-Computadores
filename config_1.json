@@ -1,0 +1,10 @@
+{
+  "nome": "teste_1",
+  "namespace": "teste",
+  "porta": 4001,
+  "ttl": 3600,
+  "intervalo_ping_s": 30,
+  "max_tentativas_reconexao": 5,
+  "endereco_rendezvous": "127.0.0.1",
+  "porta_rendezvous": 8080
+}
