@@ -17,6 +17,7 @@ import (
 	"cliente-p2p/peer"
 	"cliente-p2p/protocolo"
 	"cliente-p2p/registro"
+	"cliente-p2p/ui"
 )
 
 // Roteador envia e recebe mensagens de aplicação (SEND, PUB) através das
@@ -62,7 +63,7 @@ func (r *Roteador) Enviar(idPeerDestino, conteudo string) error {
 	go func() {
 		select {
 		case <-canalAck:
-			fmt.Printf("[ACK de %s: mensagem confirmada]\n> ", idPeerDestino)
+			ui.ImprimirSistema("ACK de %s: mensagem confirmada", idPeerDestino)
 		case <-time.After(5 * time.Second):
 			registro.Alertar("Roteador", "timeout ACK de %s para msg %s", idPeerDestino, idMsg)
 			conexao.CancelarEsperaConfirmacao(idMsg)
@@ -106,7 +107,7 @@ func (r *Roteador) Publicar(destino, conteudo string) {
 // TratarMensagemRecebida exibe uma mensagem SEND recebida e responde com
 // ACK caso RequerConfirmacao seja verdadeiro.
 func (r *Roteador) TratarMensagemRecebida(conexao *peer.ConexaoPeer, msg protocolo.MensagemEnvio) {
-	fmt.Printf("\n[%s -> voce]: %s\n> ", msg.Origem, msg.Conteudo)
+	ui.ImprimirMensagem(msg.Origem, msg.Conteudo)
 
 	if msg.RequerConfirmacao {
 		ack := protocolo.MensagemConfirmacao{
@@ -121,5 +122,5 @@ func (r *Roteador) TratarMensagemRecebida(conexao *peer.ConexaoPeer, msg protoco
 
 // TratarPublicacaoRecebida exibe uma mensagem PUB recebida de outro peer.
 func (r *Roteador) TratarPublicacaoRecebida(msg protocolo.MensagemPublicacao) {
-	fmt.Printf("\n[PUB %s <- %s]: %s\n> ", msg.Destino, msg.Origem, msg.Conteudo)
+	ui.ImprimirPublicacao(msg.Destino, msg.Origem, msg.Conteudo)
 }

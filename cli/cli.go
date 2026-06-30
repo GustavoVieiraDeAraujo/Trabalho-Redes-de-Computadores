@@ -3,16 +3,20 @@
 // Gustavo Vieira de Araujo, 211068440
 // Joao Francisco de Sousa Torres, 251037072
 
-// Package cli implementa a interface de linha de comando interativa do
-// cliente P2P (/peers, /msg, /pub, /conn, /rtt, /reconnect, /log, /quit).
+// Package cli implementa a interface de linha de comando interativa com
+// histórico de comandos (↑↓), tab-completion, numeração de peers e saída
+// colorida com timestamps.
 package cli
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/peterh/liner"
 
 	"cliente-p2p/configuracao"
 	"cliente-p2p/peer"
@@ -21,10 +25,68 @@ import (
 	"cliente-p2p/registro"
 	"cliente-p2p/rendezvous"
 	"cliente-p2p/roteador"
+	"cliente-p2p/ui"
 )
 
-// CLI agrupa as dependências necessárias para executar os comandos
-// digitados pelo usuário.
+var comandos = []string{
+	"/peers", "/msg", "/pub", "/conn", "/reconnect", "/log", "/help", "/quit",
+}
+
+// numeracaoPeer associa números de exibição (1, 2, 3…) aos identificadores
+// completos dos peers (nome@namespace), evitando que o usuário precise
+// digitar o ID completo em cada comando /msg.
+type numeracaoPeer struct {
+	mu        sync.RWMutex
+	porNumero map[int]string
+	porID     map[string]int
+	proximo   int
+}
+
+func novaNumeracao() *numeracaoPeer {
+	return &numeracaoPeer{
+		porNumero: make(map[int]string),
+		porID:     make(map[string]int),
+		proximo:   1,
+	}
+}
+
+func (n *numeracaoPeer) registrar(id string) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if num, ok := n.porID[id]; ok {
+		return num
+	}
+	num := n.proximo
+	n.proximo++
+	n.porNumero[num] = id
+	n.porID[id] = num
+	return num
+}
+
+// resolver converte um argumento (número ou ID direto) para o identificador
+// completo do peer.
+func (n *numeracaoPeer) resolver(arg string) (string, bool) {
+	var num int
+	if _, err := fmt.Sscan(arg, &num); err == nil {
+		n.mu.RLock()
+		id, ok := n.porNumero[num]
+		n.mu.RUnlock()
+		return id, ok
+	}
+	return arg, arg != ""
+}
+
+func (n *numeracaoPeer) listarIDs() []string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	ids := make([]string, 0, len(n.porID))
+	for id := range n.porID {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// CLI agrupa as dependências necessárias para executar os comandos interativos.
 type CLI struct {
 	cfg         *configuracao.Configuracao
 	tabela      *peer.TabelaPeers
@@ -32,68 +94,106 @@ type CLI struct {
 	rdv         *rendezvous.ClienteRendezvous
 	roteador    *roteador.Roteador
 	conector    *rede.Conector
+	numeracao   *numeracaoPeer
+	liner       *liner.State
 }
 
 // NovaCLI cria a interface de linha de comando associada às dependências do
 // peer local.
 func NovaCLI(cfg *configuracao.Configuracao, tabela *peer.TabelaPeers, gerenciador *peer.GerenciadorConexoes, rdv *rendezvous.ClienteRendezvous, rot *roteador.Roteador, conector *rede.Conector) *CLI {
-	return &CLI{cfg: cfg, tabela: tabela, gerenciador: gerenciador, rdv: rdv, roteador: rot, conector: conector}
-}
-
-// Executar imprime o prompt e processa os comandos digitados pelo usuário
-// até o final da entrada padrão (ou até /quit).
-func (c *CLI) Executar() {
-	fmt.Printf("Conectado como %s\n", c.cfg.MeuID())
-	fmt.Println("Comandos: /peers, /msg, /pub, /conn, /rtt, /reconnect, /log, /quit")
-	fmt.Print("> ")
-
-	leitor := bufio.NewScanner(os.Stdin)
-	for leitor.Scan() {
-		linha := strings.TrimSpace(leitor.Text())
-		if linha != "" {
-			c.processar(linha)
-		}
-		fmt.Print("> ")
+	return &CLI{
+		cfg:         cfg,
+		tabela:      tabela,
+		gerenciador: gerenciador,
+		rdv:         rdv,
+		roteador:    rot,
+		conector:    conector,
+		numeracao:   novaNumeracao(),
 	}
 }
 
-// processar interpreta uma linha digitada e despacha para o comando
-// correspondente.
+// Executar inicializa o liner e entra no loop principal de leitura de
+// comandos. Suprime logs de nível INFO para não poluir o chat.
+func (c *CLI) Executar() {
+	registro.DefinirNivel("WARN")
+
+	l := liner.NewLiner()
+	defer l.Close()
+	l.SetCtrlCAborts(true)
+	c.liner = l
+
+	// Tab-completion: completa comandos e IDs de peers após /msg.
+	l.SetCompleter(func(line string) (comp []string) {
+		partes := strings.Fields(line)
+		if len(partes) <= 1 && strings.HasPrefix(line, "/") {
+			prefix := line
+			for _, cmd := range comandos {
+				if strings.HasPrefix(cmd, prefix) {
+					comp = append(comp, cmd+" ")
+				}
+			}
+			return
+		}
+		if len(partes) == 2 && partes[0] == "/msg" {
+			for _, id := range c.numeracao.listarIDs() {
+				if strings.HasPrefix(id, partes[1]) {
+					comp = append(comp, "/msg "+id+" ")
+				}
+			}
+		}
+		return
+	})
+
+	prompt := fmt.Sprintf("[%s] > ", c.cfg.MeuID())
+	ui.DefinirPrompt(prompt)
+
+	fmt.Printf("\033[1m\033[32mConectado como %s\033[0m\n", c.cfg.MeuID())
+	fmt.Println("Digite \033[1m/help\033[0m para ver os comandos disponíveis.")
+
+	for {
+		texto, err := l.Prompt(prompt)
+		if err == liner.ErrPromptAborted || err == io.EOF {
+			c.comandoSair()
+			return
+		}
+		texto = strings.TrimSpace(texto)
+		if texto != "" {
+			l.AppendHistory(texto)
+			c.processar(texto)
+		}
+	}
+}
+
 func (c *CLI) processar(linha string) {
 	partes := strings.Fields(linha)
 	if len(partes) == 0 {
 		return
 	}
-
-	comando := partes[0]
-	args := partes[1:]
-
-	switch comando {
+	switch partes[0] {
 	case "/peers":
-		c.comandoPeers(args)
+		c.comandoPeers(partes[1:])
 	case "/msg":
-		c.comandoMsg(args)
+		c.comandoMsg(partes[1:])
 	case "/pub":
-		c.comandoPub(args)
+		c.comandoPub(partes[1:])
 	case "/conn":
 		c.comandoConexoes()
 	case "/rtt":
-		c.comandoRTT()
+		c.comandoConexoes()
 	case "/reconnect":
 		c.comandoReconectar()
 	case "/log":
-		c.comandoLog(args)
+		c.comandoLog(partes[1:])
+	case "/help":
+		c.comandoAjuda()
 	case "/quit":
 		c.comandoSair()
 	default:
-		fmt.Printf("Comando desconhecido: %s\n", comando)
-		fmt.Println("Comandos: /peers, /msg, /pub, /conn, /rtt, /reconnect, /log, /quit")
+		ui.Erro("comando desconhecido: %s  (use /help)", partes[0])
 	}
 }
 
-// comandoPeers executa DISCOVER no Rendezvous e lista os peers encontrados.
-// args[0] pode ser "*" (todos os namespaces) ou "#namespace" (namespace
-// específico); se omitido, usa o namespace do peer local.
+// comandoPeers executa DISCOVER, numera os peers e exibe status de conexão.
 func (c *CLI) comandoPeers(args []string) {
 	namespace := c.cfg.Namespace
 	if len(args) > 0 {
@@ -106,105 +206,96 @@ func (c *CLI) comandoPeers(args []string) {
 
 	peers, err := c.rdv.Descobrir(namespace)
 	if err != nil {
-		fmt.Printf("Erro: %v\n", err)
+		ui.Erro("DISCOVER falhou: %v", err)
 		return
 	}
 
 	meuID := c.cfg.MeuID()
+	labelNS := namespace
+	if labelNS == "" {
+		labelNS = "todos"
+	}
+	ui.Linha("\033[1mPeers — namespace '%s':\033[0m", labelNS)
+
 	encontrados := 0
 	for _, p := range peers {
 		if p.Identificador() == meuID {
 			continue
 		}
-		conectado := ""
-		if c.gerenciador.Possui(p.Identificador()) {
-			conectado = " [conectado]"
-		}
-		fmt.Printf("  %s  %s:%d  expira_em=%ds%s\n",
-			p.Identificador(), p.IP, p.Porta, p.ExpiraEm, conectado)
-
-		// Atualiza a tabela local com os dados frescos do Rendezvous.
+		num := c.numeracao.registrar(p.Identificador())
 		p.Estado = protocolo.EstadoAtivo
 		c.tabela.Atualizar(p)
+
+		status := "\033[90mdesconectado\033[0m"
+		if c.gerenciador.Possui(p.Identificador()) {
+			status = "\033[32mconectado\033[0m"
+		}
+		ui.Linha("  \033[1m[%d]\033[0m %-28s %s:%d  expira=%ds  %s",
+			num, p.Identificador(), p.IP, p.Porta, p.ExpiraEm, status)
 		encontrados++
 	}
 
 	if encontrados == 0 {
-		fmt.Println("  Nenhum peer encontrado.")
+		ui.Linha("  Nenhum peer encontrado.")
+	} else {
+		ui.Linha("  \033[90mUse /msg <numero> <mensagem> para enviar.\033[0m")
 	}
 	c.conector.Disparar()
 }
 
-// comandoMsg envia uma mensagem direta (SEND) para o peer indicado.
-// Uso: /msg <peer_id> <mensagem>
+// comandoMsg envia mensagem direta, aceitando número ou ID completo.
 func (c *CLI) comandoMsg(args []string) {
 	if len(args) < 2 {
-		fmt.Println("Uso: /msg <peer_id> <mensagem>")
+		ui.Erro("uso: /msg <peer_id|numero> <mensagem>")
 		return
 	}
-	idPeer := args[0]
+	idPeer, ok := c.numeracao.resolver(args[0])
+	if !ok {
+		ui.Erro("peer #%s não encontrado — use /peers para atualizar a lista", args[0])
+		return
+	}
 	conteudo := strings.Join(args[1:], " ")
 	if err := c.roteador.Enviar(idPeer, conteudo); err != nil {
-		fmt.Printf("Erro: %v\n", err)
+		ui.Erro("%v", err)
 	}
 }
 
-// comandoPub envia uma mensagem de difusão (PUB).
-// Uso: /pub * <mensagem>  |  /pub #<namespace> <mensagem>
 func (c *CLI) comandoPub(args []string) {
 	if len(args) < 2 {
-		fmt.Println("Uso: /pub * <mensagem>  |  /pub #<namespace> <mensagem>")
+		ui.Erro("uso: /pub * <mensagem>  |  /pub #<namespace> <mensagem>")
 		return
 	}
 	destino := args[0]
 	conteudo := strings.Join(args[1:], " ")
 	c.roteador.Publicar(destino, conteudo)
-	fmt.Printf("PUB enviado para %s\n", destino)
+	ui.Confirmacao("PUB enviado para %s", destino)
 }
 
-// comandoConexoes lista as conexões P2P ativas, sua direção (entrada/saída)
-// e o RTT medido.
+// comandoConexoes lista conexões ativas com RTT e direção (unifica /conn e /rtt).
 func (c *CLI) comandoConexoes() {
 	conexoes := c.gerenciador.Listar()
 	if len(conexoes) == 0 {
-		fmt.Println("  Nenhuma conexão ativa.")
+		ui.Linha("  Nenhuma conexão ativa.")
 		return
 	}
+	ui.Linha("\033[1mConexões ativas:\033[0m")
 	for _, conexao := range conexoes {
 		rtt := conexao.ObterRTT()
-		rttTexto := "sem dados"
+		rttTexto := "\033[90msem dados\033[0m"
 		if rtt > 0 {
-			rttTexto = fmt.Sprintf("%.1fms", rtt)
+			rttTexto = fmt.Sprintf("\033[32m%.1fms\033[0m", rtt)
 		}
-		fmt.Printf("  %s  (%s)  rtt=%s\n", conexao.IDPeer, conexao.Direcao, rttTexto)
+		num := c.numeracao.registrar(conexao.IDPeer)
+		ui.Linha("  \033[1m[%d]\033[0m %-28s (%s)  RTT=%s",
+			num, conexao.IDPeer, conexao.Direcao, rttTexto)
 	}
 }
 
-// comandoRTT exibe o RTT médio medido para cada conexão ativa.
-func (c *CLI) comandoRTT() {
-	conexoes := c.gerenciador.Listar()
-	if len(conexoes) == 0 {
-		fmt.Println("  Nenhuma conexão ativa.")
-		return
-	}
-	for _, conexao := range conexoes {
-		rtt := conexao.ObterRTT()
-		if rtt == 0 {
-			fmt.Printf("  %s: sem dados de RTT ainda\n", conexao.IDPeer)
-		} else {
-			fmt.Printf("  %s: RTT médio = %.1f ms\n", conexao.IDPeer, rtt)
-		}
-	}
-}
-
-// comandoReconectar executa DISCOVER imediatamente para atualizar a tabela
-// de peers e depois dispara o conector para estabelecer conexões pendentes,
-// sem esperar o próximo ciclo automático de 60s.
 func (c *CLI) comandoReconectar() {
-	fmt.Println("Forçando descoberta e reconexão...")
+	ui.Linha("Forçando descoberta e reconexão...")
 	peers, err := c.rdv.Descobrir(c.cfg.Namespace)
 	if err != nil {
-		fmt.Printf("Aviso: DISCOVER falhou (%v) — reconciliando com peers já conhecidos\n", err)
+		ui.Erro("DISCOVER falhou: %v — reconciliando com peers conhecidos", err)
 	} else {
 		meuID := c.cfg.MeuID()
 		c.tabela.MarcarTodosObsoletos()
@@ -214,29 +305,59 @@ func (c *CLI) comandoReconectar() {
 			}
 			p.Estado = protocolo.EstadoAtivo
 			c.tabela.Atualizar(p)
+			c.numeracao.registrar(p.Identificador())
 		}
 	}
 	c.conector.Disparar()
+	ui.Confirmacao("Reconexão disparada.")
 }
 
-// comandoLog altera o nível de log em tempo de execução.
-// Uso: /log <DEBUG|INFO|WARN|ERROR>
 func (c *CLI) comandoLog(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Uso: /log <DEBUG|INFO|WARN|ERROR>")
+		ui.Erro("uso: /log <DEBUG|INFO|WARN|ERROR>")
 		return
 	}
-	registro.DefinirNivel(args[0])
-	fmt.Printf("Nível de log: %s\n", strings.ToUpper(args[0]))
+	nivel := strings.ToUpper(args[0])
+	registro.DefinirNivel(nivel)
+	ui.Confirmacao("Nível de log alterado para %s", nivel)
 }
 
-// comandoSair envia BYE para todos os peers conectados, desregistra o peer
-// local do Rendezvous e encerra o programa.
+func (c *CLI) comandoAjuda() {
+	ui.Linha("\033[1mComandos disponíveis:\033[0m")
+	ui.Linha("")
+	ui.Linha("  \033[1m/peers [* | #namespace]\033[0m")
+	ui.Linha("    Lista peers no Rendezvous e atribui números de atalho.")
+	ui.Linha("    sem argumento = namespace atual  |  * = todos  |  #ns = específico")
+	ui.Linha("")
+	ui.Linha("  \033[1m/msg <id|numero> <mensagem>\033[0m")
+	ui.Linha("    Envia mensagem direta. Use o número exibido em /peers ou /conn.")
+	ui.Linha("")
+	ui.Linha("  \033[1m/pub <* | #namespace> <mensagem>\033[0m")
+	ui.Linha("    Difunde mensagem para todos (*) ou somente para um namespace.")
+	ui.Linha("")
+	ui.Linha("  \033[1m/conn\033[0m")
+	ui.Linha("    Lista conexões TCP ativas com direção e RTT medido.")
+	ui.Linha("")
+	ui.Linha("  \033[1m/reconnect\033[0m")
+	ui.Linha("    Força DISCOVER imediato e tenta conectar a todos os peers ativos.")
+	ui.Linha("")
+	ui.Linha("  \033[1m/log <DEBUG|INFO|WARN|ERROR>\033[0m")
+	ui.Linha("    Altera o nível de log em tempo real.")
+	ui.Linha("")
+	ui.Linha("  \033[1m/help\033[0m  — esta tela")
+	ui.Linha("  \033[1m/quit\033[0m  — encerra (envia BYE, desregistra do Rendezvous)")
+	ui.Linha("")
+	ui.Linha("  \033[90mDica: TAB completa comandos e IDs. ↑↓ navega no histórico.\033[0m")
+}
+
 func (c *CLI) comandoSair() {
-	fmt.Println("Encerrando...")
+	fmt.Println("\nEncerrando...")
 	for _, conexao := range c.gerenciador.Listar() {
 		rede.EnviarTchau(conexao, c.cfg, 2*time.Second)
 	}
 	_ = c.rdv.Desregistrar()
+	if c.liner != nil {
+		c.liner.Close()
+	}
 	os.Exit(0)
 }

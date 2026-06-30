@@ -7,7 +7,6 @@ package rede
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"cliente-p2p/configuracao"
@@ -15,6 +14,7 @@ import (
 	"cliente-p2p/protocolo"
 	"cliente-p2p/registro"
 	"cliente-p2p/roteador"
+	"cliente-p2p/ui"
 )
 
 // iniciarLeitor lê continuamente mensagens de conexao e as despacha para o
@@ -105,7 +105,7 @@ func iniciarLeitor(conexao *peer.ConexaoPeer, gerenciador *peer.GerenciadorConex
 				TTL:     1,
 			}
 			_ = conexao.EscreverJSON(tchauOk)
-			fmt.Printf("\n[%s encerrou a sessão]\n> ", conexao.IDPeer)
+			ui.ImprimirSistema("%s encerrou a sessão", conexao.IDPeer)
 			return
 
 		case "BYE_OK":
