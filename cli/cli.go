@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/peterh/liner"
@@ -32,60 +31,6 @@ var comandos = []string{
 	"/peers", "/msg", "/pub", "/conn", "/reconnect", "/log", "/help", "/quit",
 }
 
-// numeracaoPeer associa números de exibição (1, 2, 3…) aos identificadores
-// completos dos peers (nome@namespace), evitando que o usuário precise
-// digitar o ID completo em cada comando /msg.
-type numeracaoPeer struct {
-	mu        sync.RWMutex
-	porNumero map[int]string
-	porID     map[string]int
-	proximo   int
-}
-
-func novaNumeracao() *numeracaoPeer {
-	return &numeracaoPeer{
-		porNumero: make(map[int]string),
-		porID:     make(map[string]int),
-		proximo:   1,
-	}
-}
-
-func (n *numeracaoPeer) registrar(id string) int {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if num, ok := n.porID[id]; ok {
-		return num
-	}
-	num := n.proximo
-	n.proximo++
-	n.porNumero[num] = id
-	n.porID[id] = num
-	return num
-}
-
-// resolver converte um argumento (número ou ID direto) para o identificador
-// completo do peer.
-func (n *numeracaoPeer) resolver(arg string) (string, bool) {
-	var num int
-	if _, err := fmt.Sscan(arg, &num); err == nil {
-		n.mu.RLock()
-		id, ok := n.porNumero[num]
-		n.mu.RUnlock()
-		return id, ok
-	}
-	return arg, arg != ""
-}
-
-func (n *numeracaoPeer) listarIDs() []string {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	ids := make([]string, 0, len(n.porID))
-	for id := range n.porID {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
 // CLI agrupa as dependências necessárias para executar os comandos interativos.
 type CLI struct {
 	cfg         *configuracao.Configuracao
@@ -94,7 +39,6 @@ type CLI struct {
 	rdv         *rendezvous.ClienteRendezvous
 	roteador    *roteador.Roteador
 	conector    *rede.Conector
-	numeracao   *numeracaoPeer
 	liner       *liner.State
 }
 
@@ -108,7 +52,6 @@ func NovaCLI(cfg *configuracao.Configuracao, tabela *peer.TabelaPeers, gerenciad
 		rdv:         rdv,
 		roteador:    rot,
 		conector:    conector,
-		numeracao:   novaNumeracao(),
 	}
 }
 
@@ -135,7 +78,7 @@ func (c *CLI) Executar() {
 			return
 		}
 		if len(partes) == 2 && partes[0] == "/msg" {
-			for _, id := range c.numeracao.listarIDs() {
+			for _, id := range ui.ListarIDsPeers() {
 				if strings.HasPrefix(id, partes[1]) {
 					comp = append(comp, "/msg "+id+" ")
 				}
@@ -222,7 +165,7 @@ func (c *CLI) comandoPeers(args []string) {
 		if p.Identificador() == meuID {
 			continue
 		}
-		num := c.numeracao.registrar(p.Identificador())
+		num := ui.RegistrarPeer(p.Identificador())
 		p.Estado = protocolo.EstadoAtivo
 		c.tabela.Atualizar(p)
 
@@ -249,7 +192,7 @@ func (c *CLI) comandoMsg(args []string) {
 		ui.Erro("uso: /msg <peer_id|numero> <mensagem>")
 		return
 	}
-	idPeer, ok := c.numeracao.resolver(args[0])
+	idPeer, ok := ui.ResolverPeer(args[0])
 	if !ok {
 		ui.Erro("peer #%s não encontrado — use /peers para atualizar a lista", args[0])
 		return
@@ -285,7 +228,7 @@ func (c *CLI) comandoConexoes() {
 		if rtt > 0 {
 			rttTexto = fmt.Sprintf("\033[32m%.1fms\033[0m", rtt)
 		}
-		num := c.numeracao.registrar(conexao.IDPeer)
+		num := ui.RegistrarPeer(conexao.IDPeer)
 		ui.Linha("  \033[1m[%d]\033[0m %-28s (%s)  RTT=%s",
 			num, conexao.IDPeer, conexao.Direcao, rttTexto)
 	}
@@ -305,7 +248,7 @@ func (c *CLI) comandoReconectar() {
 			}
 			p.Estado = protocolo.EstadoAtivo
 			c.tabela.Atualizar(p)
-			c.numeracao.registrar(p.Identificador())
+			ui.RegistrarPeer(p.Identificador())
 		}
 	}
 	c.conector.Disparar()
