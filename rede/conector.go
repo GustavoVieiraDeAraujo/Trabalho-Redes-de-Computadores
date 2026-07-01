@@ -17,6 +17,7 @@ import (
 	"cliente-p2p/protocolo"
 	"cliente-p2p/registro"
 	"cliente-p2p/roteador"
+	"cliente-p2p/ui"
 )
 
 // Conector estabelece conexões TCP de saída com peers marcados como ATIVO
@@ -166,14 +167,18 @@ func (c *Conector) conectarAoPeer(peerAlvo protocolo.RegistroPeer) {
 			continue
 		}
 
+		conexao.IP = peerAlvo.IP
+		conexao.ConectadoEm = time.Now()
 		conexaoTCP.SetDeadline(time.Time{})
 		registro.Informar("Conector", "conectado a %s", peerAlvo.Identificador())
 		c.gerenciador.Adicionar(conexao)
 		c.tabela.MarcarAtivo(peerAlvo.Identificador())
+		num := ui.RegistrarPeer(peerAlvo.Identificador())
+		ui.ImprimirSistema("[%d] %s conectou — %s:%d (saída)", num, peerAlvo.Identificador(), peerAlvo.IP, peerAlvo.Porta)
 		go iniciarManutencaoConexao(conexao, c.cfg)
 		go iniciarLeitor(conexao, c.gerenciador, c.roteador, c.cfg)
 		return
 	}
 
-	registro.Alertar("Conector", "desistindo de %s após %d tentativas", peerAlvo.Identificador(), maximo)
+	ui.ImprimirSistema("falha ao conectar a %s após %d tentativas", peerAlvo.Identificador(), maximo)
 }

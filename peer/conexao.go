@@ -28,8 +28,10 @@ const (
 // incluindo escrita serializada (mutex), canais para PONG/BYE_OK e o
 // controle de confirmações (ACK) pendentes.
 type ConexaoPeer struct {
-	IDPeer  string
-	Direcao string
+	IDPeer      string
+	Direcao     string
+	IP          string    // endereço IP remoto
+	ConectadoEm time.Time // momento em que o handshake foi concluído
 
 	conexao      net.Conn
 	escritor     *json.Encoder

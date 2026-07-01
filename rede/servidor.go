@@ -16,6 +16,7 @@ import (
 	"cliente-p2p/protocolo"
 	"cliente-p2p/registro"
 	"cliente-p2p/roteador"
+	"cliente-p2p/ui"
 )
 
 // Servidor aceita conexões TCP entrantes de outros peers e realiza o
@@ -77,6 +78,9 @@ func (s *Servidor) tratarConexaoEntrante(conexaoTCP net.Conn) {
 	}
 
 	conexao.IDPeer = hello.IDPeer
+	if tcpAddr, ok := conexaoTCP.RemoteAddr().(*net.TCPAddr); ok {
+		conexao.IP = tcpAddr.IP.String()
+	}
 	conexaoTCP.SetDeadline(time.Time{})
 
 	helloOk := protocolo.MensagemHello{
@@ -92,6 +96,7 @@ func (s *Servidor) tratarConexaoEntrante(conexaoTCP net.Conn) {
 		return
 	}
 
+	conexao.ConectadoEm = time.Now()
 	registro.Informar("Servidor", "inbound conectado: %s", conexao.IDPeer)
 
 	// Fecha conexão antiga com o mesmo peer, se existir.
@@ -101,6 +106,8 @@ func (s *Servidor) tratarConexaoEntrante(conexaoTCP net.Conn) {
 	}
 
 	s.gerenciador.Adicionar(conexao)
+	num := ui.RegistrarPeer(conexao.IDPeer)
+	ui.ImprimirSistema("[%d] %s conectou — %s (entrada)", num, conexao.IDPeer, conexao.IP)
 	go iniciarManutencaoConexao(conexao, s.cfg)
 	go iniciarLeitor(conexao, s.gerenciador, s.roteador, s.cfg)
 }

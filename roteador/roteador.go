@@ -63,7 +63,8 @@ func (r *Roteador) Enviar(idPeerDestino, conteudo string) error {
 	go func() {
 		select {
 		case <-canalAck:
-			ui.ImprimirSistema("ACK de %s: mensagem confirmada", idPeerDestino)
+			num := ui.RegistrarPeer(idPeerDestino)
+			ui.Confirmacao("ACK [%d] %s", num, idPeerDestino)
 		case <-time.After(5 * time.Second):
 			registro.Alertar("Roteador", "timeout ACK de %s para msg %s", idPeerDestino, idMsg)
 			conexao.CancelarEsperaConfirmacao(idMsg)

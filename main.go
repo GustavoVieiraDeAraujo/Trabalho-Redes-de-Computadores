@@ -24,9 +24,9 @@ import (
 	"cliente-p2p/descoberta"
 	"cliente-p2p/peer"
 	"cliente-p2p/rede"
-	"cliente-p2p/registro"
 	"cliente-p2p/rendezvous"
 	"cliente-p2p/roteador"
+	"cliente-p2p/ui"
 )
 
 func main() {
@@ -37,10 +37,6 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "erro ao carregar configuração:", err)
 		os.Exit(1)
-	}
-
-	if _, err := registro.IniciarLogArquivo(cfg.ArquivoLog); err != nil {
-		fmt.Fprintln(os.Stderr, "aviso:", err)
 	}
 
 	rdv := rendezvous.NovoClienteRendezvous(cfg)
@@ -64,18 +60,13 @@ func main() {
 	go conector.Iniciar()
 	go rdv.IniciarRenovacaoPeriodica()
 
-	// Encerramento limpo via SIGINT/SIGTERM: envia BYE para todos os peers
-	// conectados, desregistra do Rendezvous e finaliza o processo.
+	// Encerramento limpo via SIGINT/SIGTERM: sinaliza ao TUI para executar
+	// o fluxo de encerramento (BYE + unregister) e restaurar o terminal.
 	canalSinal := make(chan os.Signal, 1)
 	signal.Notify(canalSinal, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-canalSinal
-		fmt.Println("\nEncerrando...")
-		for _, conexao := range gerenciador.Listar() {
-			rede.EnviarTchau(conexao, cfg, 2*time.Second)
-		}
-		_ = rdv.Desregistrar()
-		os.Exit(0)
+		ui.EnviarMsg(ui.MsgUI{Tipo: "quit"})
 	}()
 
 	cli.NovaCLI(cfg, tabela, gerenciador, rdv, rot, conector).Executar()

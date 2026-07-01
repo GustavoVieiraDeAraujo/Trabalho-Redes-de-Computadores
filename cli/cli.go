@@ -3,19 +3,18 @@
 // Gustavo Vieira de Araujo, 211068440
 // Joao Francisco de Sousa Torres, 251037072
 
-// Package cli implementa a interface de linha de comando interativa com
-// histórico de comandos (↑↓), tab-completion, numeração de peers e saída
-// colorida com timestamps.
+// Package cli implementa a interface de linha de comando interativa usando
+// o TUI bubbletea com tela dividida: viewport de mensagens (rolável) acima e
+// campo de entrada sempre visível abaixo. Suporta histórico (↑↓), numeração
+// de peers e saída colorida com timestamps.
 package cli
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
-
-	"github.com/peterh/liner"
 
 	"cliente-p2p/configuracao"
 	"cliente-p2p/peer"
@@ -28,7 +27,7 @@ import (
 )
 
 var comandos = []string{
-	"/peers", "/msg", "/pub", "/conn", "/reconnect", "/log", "/help", "/quit",
+	"/peers", "/msg", "/pub", "/conn", "/reconnect", "/help", "/quit",
 }
 
 // CLI agrupa as dependências necessárias para executar os comandos interativos.
@@ -39,7 +38,6 @@ type CLI struct {
 	rdv         *rendezvous.ClienteRendezvous
 	roteador    *roteador.Roteador
 	conector    *rede.Conector
-	liner       *liner.State
 }
 
 // NovaCLI cria a interface de linha de comando associada às dependências do
@@ -55,56 +53,28 @@ func NovaCLI(cfg *configuracao.Configuracao, tabela *peer.TabelaPeers, gerenciad
 	}
 }
 
-// Executar inicializa o liner e entra no loop principal de leitura de
-// comandos. Suprime logs de nível INFO para não poluir o chat.
+// Executar inicia o TUI bubbletea.
 func (c *CLI) Executar() {
 	registro.DefinirNivel("WARN")
-
-	l := liner.NewLiner()
-	defer l.Close()
-	l.SetCtrlCAborts(true)
-	c.liner = l
-
-	// Tab-completion: completa comandos e IDs de peers após /msg.
-	l.SetCompleter(func(line string) (comp []string) {
-		partes := strings.Fields(line)
-		if len(partes) <= 1 && strings.HasPrefix(line, "/") {
-			prefix := line
-			for _, cmd := range comandos {
-				if strings.HasPrefix(cmd, prefix) {
-					comp = append(comp, cmd+" ")
-				}
-			}
-			return
-		}
-		if len(partes) == 2 && partes[0] == "/msg" {
-			for _, id := range ui.ListarIDsPeers() {
-				if strings.HasPrefix(id, partes[1]) {
-					comp = append(comp, "/msg "+id+" ")
-				}
-			}
-		}
-		return
-	})
-
-	prompt := fmt.Sprintf("[%s] > ", c.cfg.MeuID())
-	ui.DefinirPrompt(prompt)
-
-	fmt.Printf("\033[1m\033[32mConectado como %s\033[0m\n", c.cfg.MeuID())
-	fmt.Println("Digite \033[1m/help\033[0m para ver os comandos disponíveis.")
-
-	for {
-		texto, err := l.Prompt(prompt)
-		if err == liner.ErrPromptAborted || err == io.EOF {
-			c.comandoSair()
-			return
-		}
-		texto = strings.TrimSpace(texto)
-		if texto != "" {
-			l.AppendHistory(texto)
-			c.processar(texto)
-		}
+	if err := iniciarTUI(c); err != nil {
+		fmt.Fprintf(os.Stderr, "erro no TUI: %v\n", err)
+		os.Exit(1)
 	}
+}
+
+// cleanup envia BYE para todos os peers em paralelo e desregistra do
+// Rendezvous. Chamado imediatamente antes de encerrar o TUI.
+func (c *CLI) cleanup() {
+	var wg sync.WaitGroup
+	for _, conexao := range c.gerenciador.Listar() {
+		wg.Add(1)
+		go func(conn *peer.ConexaoPeer) {
+			defer wg.Done()
+			rede.EnviarTchau(conn, c.cfg, 2*time.Second)
+		}(conexao)
+	}
+	wg.Wait()
+	_ = c.rdv.Desregistrar()
 }
 
 func (c *CLI) processar(linha string) {
@@ -121,12 +91,8 @@ func (c *CLI) processar(linha string) {
 		c.comandoPub(partes[1:])
 	case "/conn":
 		c.comandoConexoes()
-	case "/rtt":
-		c.comandoConexoes()
 	case "/reconnect":
 		c.comandoReconectar()
-	case "/log":
-		c.comandoLog(partes[1:])
 	case "/help":
 		c.comandoAjuda()
 	case "/quit":
@@ -153,6 +119,7 @@ func (c *CLI) comandoPeers(args []string) {
 		return
 	}
 
+	ui.EnviarMsg(ui.MsgUI{Tipo: "cmd_sep", Conteudo: "/peers"})
 	meuID := c.cfg.MeuID()
 	labelNS := namespace
 	if labelNS == "" {
@@ -173,15 +140,15 @@ func (c *CLI) comandoPeers(args []string) {
 		if c.gerenciador.Possui(p.Identificador()) {
 			status = "\033[32mconectado\033[0m"
 		}
-		ui.Linha("  \033[1m[%d]\033[0m %-28s %s:%d  expira=%ds  %s",
+		ui.Linha("\033[1m[%d]\033[0m %-28s %s:%d  expira=%ds  %s",
 			num, p.Identificador(), p.IP, p.Porta, p.ExpiraEm, status)
 		encontrados++
 	}
 
 	if encontrados == 0 {
-		ui.Linha("  Nenhum peer encontrado.")
+		ui.Linha("Nenhum peer encontrado.")
 	} else {
-		ui.Linha("  \033[90mUse /msg <numero> <mensagem> para enviar.\033[0m")
+		ui.Linha("\033[90mUse /msg <numero> <mensagem> para enviar.\033[0m")
 	}
 	c.conector.Disparar()
 }
@@ -200,6 +167,8 @@ func (c *CLI) comandoMsg(args []string) {
 	conteudo := strings.Join(args[1:], " ")
 	if err := c.roteador.Enviar(idPeer, conteudo); err != nil {
 		ui.Erro("%v", err)
+	} else {
+		ui.EnviarMsg(ui.MsgUI{Tipo: "enviado", Destino: idPeer, Conteudo: conteudo})
 	}
 }
 
@@ -211,14 +180,16 @@ func (c *CLI) comandoPub(args []string) {
 	destino := args[0]
 	conteudo := strings.Join(args[1:], " ")
 	c.roteador.Publicar(destino, conteudo)
+	ui.EnviarMsg(ui.MsgUI{Tipo: "cmd_sep", Conteudo: "/pub"})
 	ui.Confirmacao("PUB enviado para %s", destino)
 }
 
-// comandoConexoes lista conexões ativas com RTT e direção (unifica /conn e /rtt).
+// comandoConexoes lista conexões ativas com IP, RTT e direção.
 func (c *CLI) comandoConexoes() {
+	ui.EnviarMsg(ui.MsgUI{Tipo: "cmd_sep", Conteudo: "/conn"})
 	conexoes := c.gerenciador.Listar()
 	if len(conexoes) == 0 {
-		ui.Linha("  Nenhuma conexão ativa.")
+		ui.Linha("Nenhuma conexão ativa.")
 		return
 	}
 	ui.Linha("\033[1mConexões ativas:\033[0m")
@@ -229,12 +200,29 @@ func (c *CLI) comandoConexoes() {
 			rttTexto = fmt.Sprintf("\033[32m%.1fms\033[0m", rtt)
 		}
 		num := ui.RegistrarPeer(conexao.IDPeer)
-		ui.Linha("  \033[1m[%d]\033[0m %-28s (%s)  RTT=%s",
-			num, conexao.IDPeer, conexao.Direcao, rttTexto)
+		ui.Linha("\033[1m[%d]\033[0m %-28s %-16s %-8s há %-8s RTT=%s",
+			num, conexao.IDPeer, conexao.IP, conexao.Direcao,
+			duracaoConexao(conexao.ConectadoEm), rttTexto)
+	}
+}
+
+func duracaoConexao(t time.Time) string {
+	if t.IsZero() {
+		return "?"
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dmin", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%dmin", int(d.Hours()), int(d.Minutes())%60)
 	}
 }
 
 func (c *CLI) comandoReconectar() {
+	ui.EnviarMsg(ui.MsgUI{Tipo: "cmd_sep", Conteudo: "/reconnect"})
 	ui.Linha("Forçando descoberta e reconexão...")
 	peers, err := c.rdv.Descobrir(c.cfg.Namespace)
 	if err != nil {
@@ -255,52 +243,41 @@ func (c *CLI) comandoReconectar() {
 	ui.Confirmacao("Reconexão disparada.")
 }
 
-func (c *CLI) comandoLog(args []string) {
-	if len(args) == 0 {
-		ui.Erro("uso: /log <DEBUG|INFO|WARN|ERROR>")
-		return
-	}
-	nivel := strings.ToUpper(args[0])
-	registro.DefinirNivel(nivel)
-	ui.Confirmacao("Nível de log alterado para %s", nivel)
-}
-
 func (c *CLI) comandoAjuda() {
-	ui.Linha("\033[1mComandos disponíveis:\033[0m")
-	ui.Linha("")
-	ui.Linha("  \033[1m/peers [* | #namespace]\033[0m")
-	ui.Linha("    Lista peers no Rendezvous e atribui números de atalho.")
-	ui.Linha("    sem argumento = namespace atual  |  * = todos  |  #ns = específico")
-	ui.Linha("")
-	ui.Linha("  \033[1m/msg <id|numero> <mensagem>\033[0m")
-	ui.Linha("    Envia mensagem direta. Use o número exibido em /peers ou /conn.")
-	ui.Linha("")
-	ui.Linha("  \033[1m/pub <* | #namespace> <mensagem>\033[0m")
-	ui.Linha("    Difunde mensagem para todos (*) ou somente para um namespace.")
-	ui.Linha("")
-	ui.Linha("  \033[1m/conn\033[0m")
-	ui.Linha("    Lista conexões TCP ativas com direção e RTT medido.")
-	ui.Linha("")
-	ui.Linha("  \033[1m/reconnect\033[0m")
-	ui.Linha("    Força DISCOVER imediato e tenta conectar a todos os peers ativos.")
-	ui.Linha("")
-	ui.Linha("  \033[1m/log <DEBUG|INFO|WARN|ERROR>\033[0m")
-	ui.Linha("    Altera o nível de log em tempo real.")
-	ui.Linha("")
-	ui.Linha("  \033[1m/help\033[0m  — esta tela")
-	ui.Linha("  \033[1m/quit\033[0m  — encerra (envia BYE, desregistra do Rendezvous)")
-	ui.Linha("")
-	ui.Linha("  \033[90mDica: TAB completa comandos e IDs. ↑↓ navega no histórico.\033[0m")
+	const (
+		rst = "\033[0m"
+		cmd = "\033[1;96m"     // ciano brilhante — comando
+		arg = "\033[38;5;245m" // cinza médio — argumentos
+		ex  = "\033[92m"       // verde — exemplo
+		hdr = "\033[38;5;243m" // cinza — cabeçalho
+		div = "\033[38;5;236m" // cinza escuro — divisória
+	)
+
+	linha := func(nome, sintaxe, exemplo string) string {
+		return fmt.Sprintf("%s%-13s%s %s%-32s%s %s%s%s",
+			cmd, nome, rst,
+			arg, sintaxe, rst,
+			ex, exemplo, rst)
+	}
+
+	bloco := strings.Join([]string{
+		fmt.Sprintf("%s%-13s %-32s %s%s", hdr, "Comando", "Argumentos", "Exemplo", rst),
+		fmt.Sprintf("%s%-13s %-32s %s%s", div,
+			strings.Repeat("─", 11), strings.Repeat("─", 30), strings.Repeat("─", 18), rst),
+		linha("/peers", "[* | #namespace]", "/peers *"),
+		linha("/msg", "<id|numero> <mensagem>", "/msg 1 exemplo"),
+		linha("/pub", "<* | #namespace> <mensagem>", "/pub * exemplo"),
+		linha("/conn", "", "/conn"),
+		linha("/reconnect", "", "/reconnect"),
+		linha("/help", "", "/help"),
+		linha("/quit", "", "/quit"),
+	}, "\n")
+
+	ui.EnviarMsg(ui.MsgUI{Tipo: "cmd_sep", Conteudo: "/help"})
+	ui.EnviarMsg(ui.MsgUI{Tipo: "info", Conteudo: bloco})
 }
 
+// comandoSair sinaliza ao TUI para encerrar de forma limpa (BYE + unregister).
 func (c *CLI) comandoSair() {
-	fmt.Println("\nEncerrando...")
-	for _, conexao := range c.gerenciador.Listar() {
-		rede.EnviarTchau(conexao, c.cfg, 2*time.Second)
-	}
-	_ = c.rdv.Desregistrar()
-	if c.liner != nil {
-		c.liner.Close()
-	}
-	os.Exit(0)
+	ui.EnviarMsg(ui.MsgUI{Tipo: "quit"})
 }

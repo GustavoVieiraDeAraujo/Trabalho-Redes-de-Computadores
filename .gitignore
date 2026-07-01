@@ -1,0 +1,4 @@
+cliente-p2p
+config_*.json
+peers.json
+logs/

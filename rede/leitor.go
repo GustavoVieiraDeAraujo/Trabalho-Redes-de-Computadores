@@ -22,10 +22,15 @@ import (
 // ao sair (erro de leitura, BYE ou BYE_OK), remove a conexão do
 // GerenciadorConexoes e a fecha.
 func iniciarLeitor(conexao *peer.ConexaoPeer, gerenciador *peer.GerenciadorConexoes, rot *roteador.Roteador, cfg *configuracao.Configuracao) {
+	encerramentoLimpo := false
 	defer func() {
 		gerenciador.Remover(conexao.IDPeer)
 		conexao.Fechar()
 		registro.Depurar("Leitor", "conexão com %s encerrada", conexao.IDPeer)
+		if !encerramentoLimpo {
+			num := ui.RegistrarPeer(conexao.IDPeer)
+			ui.ImprimirSistema("[%d] %s desconectou", num, conexao.IDPeer)
+		}
 	}()
 
 	meuID := cfg.MeuID()
@@ -105,7 +110,9 @@ func iniciarLeitor(conexao *peer.ConexaoPeer, gerenciador *peer.GerenciadorConex
 				TTL:     1,
 			}
 			_ = conexao.EscreverJSON(tchauOk)
-			ui.ImprimirSistema("%s encerrou a sessão", conexao.IDPeer)
+			num := ui.RegistrarPeer(conexao.IDPeer)
+			ui.ImprimirSistema("[%d] %s encerrou a sessão", num, conexao.IDPeer)
+			encerramentoLimpo = true
 			return
 
 		case "BYE_OK":
@@ -113,6 +120,7 @@ func iniciarLeitor(conexao *peer.ConexaoPeer, gerenciador *peer.GerenciadorConex
 			case conexao.CanalConfirmacaoBye <- struct{}{}:
 			default:
 			}
+			encerramentoLimpo = true
 			return
 
 		default:
