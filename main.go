@@ -50,7 +50,7 @@ func main() {
 	rot := roteador.NovoRoteador(gerenciador, cfg)
 	conector := rede.NovoConector(cfg, tabela, gerenciador, rot)
 
-	servidor := rede.NovoServidor(cfg, gerenciador, rot)
+	servidor := rede.NovoServidor(cfg, gerenciador, tabela, rot)
 	if err := servidor.Iniciar(); err != nil {
 		fmt.Fprintln(os.Stderr, "falha ao iniciar servidor:", err)
 		os.Exit(1)

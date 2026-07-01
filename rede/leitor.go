@@ -21,7 +21,7 @@ import (
 // handler correto, de acordo com o campo "type". Roda em goroutine própria;
 // ao sair (erro de leitura, BYE ou BYE_OK), remove a conexão do
 // GerenciadorConexoes e a fecha.
-func iniciarLeitor(conexao *peer.ConexaoPeer, gerenciador *peer.GerenciadorConexoes, rot *roteador.Roteador, cfg *configuracao.Configuracao) {
+func iniciarLeitor(conexao *peer.ConexaoPeer, gerenciador *peer.GerenciadorConexoes, tabela *peer.TabelaPeers, rot *roteador.Roteador, cfg *configuracao.Configuracao) {
 	encerramentoLimpo := false
 	defer func() {
 		gerenciador.Remover(conexao.IDPeer)
@@ -112,6 +112,10 @@ func iniciarLeitor(conexao *peer.ConexaoPeer, gerenciador *peer.GerenciadorConex
 			_ = conexao.EscreverJSON(tchauOk)
 			num := ui.RegistrarPeer(conexao.IDPeer)
 			ui.ImprimirSistema("[%d] %s encerrou a sessão", num, conexao.IDPeer)
+			// Evita que o Conector tente reconectar imediatamente a um peer
+			// que acabou de avisar que está saindo; ele só volta a ATIVO
+			// numa próxima descoberta (DISCOVER) que o confirme.
+			tabela.MarcarObsoleto(conexao.IDPeer)
 			encerramentoLimpo = true
 			return
 

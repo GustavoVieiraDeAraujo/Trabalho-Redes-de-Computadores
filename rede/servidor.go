@@ -24,13 +24,14 @@ import (
 type Servidor struct {
 	cfg         *configuracao.Configuracao
 	gerenciador *peer.GerenciadorConexoes
+	tabela      *peer.TabelaPeers
 	roteador    *roteador.Roteador
 }
 
 // NovoServidor cria um Servidor associado à configuração, ao gerenciador de
-// conexões e ao roteador do peer local.
-func NovoServidor(cfg *configuracao.Configuracao, gerenciador *peer.GerenciadorConexoes, rot *roteador.Roteador) *Servidor {
-	return &Servidor{cfg: cfg, gerenciador: gerenciador, roteador: rot}
+// conexões, à tabela de peers e ao roteador do peer local.
+func NovoServidor(cfg *configuracao.Configuracao, gerenciador *peer.GerenciadorConexoes, tabela *peer.TabelaPeers, rot *roteador.Roteador) *Servidor {
+	return &Servidor{cfg: cfg, gerenciador: gerenciador, tabela: tabela, roteador: rot}
 }
 
 // Iniciar abre um socket TCP em 0.0.0.0:porta e aceita conexões em uma
@@ -109,5 +110,5 @@ func (s *Servidor) tratarConexaoEntrante(conexaoTCP net.Conn) {
 	num := ui.RegistrarPeer(conexao.IDPeer)
 	ui.ImprimirSistema("[%d] %s conectou — %s (entrada)", num, conexao.IDPeer, conexao.IP)
 	go iniciarManutencaoConexao(conexao, s.cfg)
-	go iniciarLeitor(conexao, s.gerenciador, s.roteador, s.cfg)
+	go iniciarLeitor(conexao, s.gerenciador, s.tabela, s.roteador, s.cfg)
 }

@@ -176,7 +176,7 @@ func (c *Conector) conectarAoPeer(peerAlvo protocolo.RegistroPeer) {
 		num := ui.RegistrarPeer(peerAlvo.Identificador())
 		ui.ImprimirSistema("[%d] %s conectou — %s:%d (saída)", num, peerAlvo.Identificador(), peerAlvo.IP, peerAlvo.Porta)
 		go iniciarManutencaoConexao(conexao, c.cfg)
-		go iniciarLeitor(conexao, c.gerenciador, c.roteador, c.cfg)
+		go iniciarLeitor(conexao, c.gerenciador, c.tabela, c.roteador, c.cfg)
 		return
 	}
 

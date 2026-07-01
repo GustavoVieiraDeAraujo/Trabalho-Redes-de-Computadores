@@ -56,6 +56,19 @@ func (t *TabelaPeers) MarcarAtivo(idPeer string) {
 	}
 }
 
+// MarcarObsoleto marca um peer específico como OBSOLETO. Usado quando um BYE
+// é recebido, para que o Conector não tente reconectar imediatamente a um
+// peer que acabou de se desconectar de forma graciosa — a próxima chamada de
+// DISCOVER (automática ou via /peers) é que decide se ele volta a ATIVO.
+func (t *TabelaPeers) MarcarObsoleto(idPeer string) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	if p, ok := t.tabela[idPeer]; ok {
+		p.Estado = protocolo.EstadoObsoleto
+		t.tabela[idPeer] = p
+	}
+}
+
 // Listar retorna uma cópia de todos os peers conhecidos.
 func (t *TabelaPeers) Listar() []protocolo.RegistroPeer {
 	t.mutex.RLock()
