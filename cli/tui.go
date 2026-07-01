@@ -7,6 +7,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -120,8 +122,17 @@ func (m *tuiModel) atualizarAlturas() {
 
 // iniciarTUI cria o programa bubbletea, registra-o no pacote ui e o executa.
 func iniciarTUI(c *CLI) error {
-	// Logs vão para arquivo + painel interno do TUI; remove escrita em stderr.
-	registro.SilenciarTerminal(ui.LogWriter())
+	// Logs vão para arquivo (se configurado) + painel interno do TUI; remove escrita em stderr.
+	writers := []io.Writer{ui.LogWriter()}
+	if c.cfg.ArquivoLog != "" {
+		arquivo, err := os.OpenFile(c.cfg.ArquivoLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "aviso: nao foi possivel abrir arquivo_log %q: %v\n", c.cfg.ArquivoLog, err)
+		} else {
+			writers = append(writers, arquivo)
+		}
+	}
+	registro.SilenciarTerminal(writers...)
 	m := novaTUIModel(c)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	ui.DefinirPrograma(p)
