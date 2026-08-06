@@ -4,7 +4,7 @@ Projeto da disciplina **Redes de Computadores** do Departamento de Ciencia da Co
 
 Codigo-fonte em portugues com tags JSON e literais de protocolo em ingles para interoperabilidade.
 
-> **Servidor Rendezvous:** este cliente depende de um servidor Rendezvous para registro e descoberta de peers. A implementacao de referencia do servidor (fornecida pelo professor) esta disponivel em [mfcaetano/pyp2p-rdv](https://github.com/mfcaetano/pyp2p-rdv). Para testes locais, basta rodar `python3 src/rendezvous/main.py --host 0.0.0.0 --port 8080` — veja a secao [Testando Localmente](#testando-localmente-dois-peers-na-mesma-maquina).
+> **Servidor Rendezvous:** este cliente depende de um servidor Rendezvous para registro e descoberta de peers. A implementacao de referencia do servidor (fornecida pelo professor) esta disponivel em [mfcaetano/pyp2p-rdv](https://github.com/mfcaetano/pyp2p-rdv). Para testes locais, basta rodar `python3 src/rendezvous/main.py --host 0.0.0.0 --port 8080` (veja a secao [Testando Localmente](#testando-localmente-dois-peers-na-mesma-maquina)).
 
 ---
 
@@ -13,7 +13,6 @@ Codigo-fonte em portugues com tags JSON e literais de protocolo em ingles para i
 - [Participantes](#participantes)
 - [Tecnologias](#tecnologias)
 - [Escopo do Projeto](#escopo-do-projeto)
-- [Demonstracao em Video](#demonstracao-em-video)
 - [Requisitos](#requisitos)
 - [Estrutura do Projeto](#estrutura-do-projeto)
 - [Compilacao](#compilacao)
@@ -21,11 +20,11 @@ Codigo-fonte em portugues com tags JSON e literais de protocolo em ingles para i
 - [Como Executar](#como-executar)
 - [Testando Localmente](#testando-localmente-dois-peers-na-mesma-maquina)
 - [Comandos da CLI](#comandos-da-cli)
+- [Interface TUI](#interface-tui)
 - [Arquitetura](#arquitetura)
 - [Protocolos](#protocolos)
 - [Fluxo de Ponta a Ponta](#fluxo-de-ponta-a-ponta-exemplo)
 - [Concorrencia](#concorrencia)
-- [Solucao de Problemas](#solucao-de-problemas)
 
 ---
 
@@ -41,11 +40,14 @@ Codigo-fonte em portugues com tags JSON e literais de protocolo em ingles para i
 
 ## Tecnologias
 
-| Tecnologia   | Uso                                                              |
-|--------------|------------------------------------------------------------------|
-| Go 1.21+     | Linguagem de implementacao (stdlib only, sem dependencias externas)|
-| TCP          | Transporte para comunicacao Rendezvous e P2P                      |
-| JSON         | Codificacao de mensagens (delimitado por `\n`, max 32 KiB)        |
+| Tecnologia                    | Uso                                                                         |
+|-------------------------------|-----------------------------------------------------------------------------|
+| Go 1.21+                      | Linguagem de implementacao                                                   |
+| TCP                           | Transporte para comunicacao Rendezvous e P2P                                |
+| JSON                          | Codificacao de mensagens (delimitado por `\n`, max 32 KiB)                  |
+| bubbletea (charmbracelet)     | Framework TUI Elm-like: modelo/update/view, tela alternativa, suporte mouse |
+| bubbles (charmbracelet)       | Componentes reutilizaveis: viewport rolavel e campo de texto com historico   |
+| lipgloss (charmbracelet)      | Estilizacao e layout: cores 256, colunas com JoinHorizontal, barra de status|
 
 ---
 
@@ -53,26 +55,21 @@ Codigo-fonte em portugues com tags JSON e literais de protocolo em ingles para i
 
 | Requisito                                          | Implementacao                                                       |
 |----------------------------------------------------|---------------------------------------------------------------------|
-| Registro no Rendezvous (REGISTER)                  | `rendezvous/cliente.go` — registro com renovacao periodica de TTL    |
-| Descoberta de peers (DISCOVER)                     | `descoberta/descoberta.go` — loop automatico a cada 60s              |
-| Desregistro (UNREGISTER)                           | `rendezvous/cliente.go` — no `/quit` e SIGINT/SIGTERM                |
+| Registro no Rendezvous (REGISTER)                  | `rendezvous/cliente.go`: registro com renovacao periodica de TTL    |
+| Descoberta de peers (DISCOVER)                     | `descoberta/descoberta.go`: loop automatico a cada 60s              |
+| Desregistro (UNREGISTER)                           | `rendezvous/cliente.go`: no `/quit` e SIGINT/SIGTERM                |
 | Conexao TCP persistente (HELLO/HELLO_OK)           | `rede/servidor.go` (inbound) + `rede/conector.go` (outbound)        |
-| Keep-alive (PING/PONG com RTT)                     | `rede/manutencao.go` — EWMA 0.8/0.2, timeout 10s                    |
-| Mensagem direta (SEND/ACK)                         | `roteador/roteador.go` — timeout 5s, confirmacao visivel             |
-| Broadcast/namespace-cast (PUB)                     | `roteador/roteador.go` — `*` ou `#namespace`                        |
-| Encerramento controlado (BYE/BYE_OK)               | `rede/leitor.go` — resposta automatica + shutdown limpo              |
-| Reconexao com backoff exponencial                  | `rede/conector.go` — 1s, 2s, 4s... ate `max_tentativas_reconexao`   |
-| CLI interativa (9 comandos)                        | `cli/cli.go` — /peers, /msg, /pub, /conn, /rtt, /reconnect, /log, /quit |
-| Log com niveis ajustaveis e arquivo por sessao     | `registro/registro.go` — DEBUG/INFO/WARN/ERROR + `arquivo_log`       |
-| Limite de 32 KiB por linha                         | `peer/conexao.go` — rejeita linhas acima do limite                   |
-| Validacao de config.json                           | `configuracao/configuracao.go` — fail-fast se nome/namespace/porta invalidos |
-| Retry no startup do Rendezvous                     | `main.go` — 5 tentativas com backoff                                 |
-
----
-
-## Demonstracao em Video
-
-O arquivo [`docs/video_execucao_teste.mp4`](./docs/video_execucao_teste.mp4) demonstra o projeto em execucao: registro no servidor Rendezvous, descoberta automatica de peers, conexao P2P com handshake HELLO/HELLO_OK, troca de mensagens (SEND/ACK e PUB), keep-alive com PING/PONG e encerramento controlado com BYE/BYE_OK.
+| Keep-alive (PING/PONG com RTT)                     | `rede/manutencao.go`: EWMA 0.8/0.2, timeout 10s                    |
+| Mensagem direta (SEND/ACK)                         | `roteador/roteador.go`: timeout 5s, confirmacao visivel             |
+| Broadcast/namespace-cast (PUB)                     | `roteador/roteador.go`: `*` ou `#namespace`                        |
+| Encerramento controlado (BYE/BYE_OK)               | `rede/leitor.go`: resposta automatica + shutdown limpo              |
+| Reconexao com backoff exponencial                  | `rede/conector.go`: 1s, 2s, 4s... ate `max_tentativas_reconexao`   |
+| TUI interativo com 3 colunas (bubbletea)           | `cli/tui.go`: Comandos / Mensagens / Log, historico, tab-completion  |
+| CLI com 7 comandos                                 | `cli/cli.go`: /peers, /msg, /pub, /conn, /reconnect, /help, /quit  |
+| Log interno no painel TUI                          | `registro/registro.go` + `ui/ui.go`: logs roteados para coluna Log  |
+| Limite de 32 KiB por linha                         | `peer/conexao.go`: rejeita linhas acima do limite                   |
+| Validacao de config.json                           | `configuracao/configuracao.go`: fail-fast se nome/namespace/porta invalidos |
+| Retry no startup do Rendezvous                     | `main.go`: 5 tentativas com backoff                                 |
 
 ---
 
@@ -83,7 +80,7 @@ O arquivo [`docs/video_execucao_teste.mp4`](./docs/video_execucao_teste.mp4) dem
 - **Conectividade**:
   - Acesso à internet/rede para alcançar o servidor Rendezvous (host e porta definidos em `config.json`)
   - A porta TCP local definida em `porta` (config.json) precisa estar livre e, se houver firewall/NAT entre os peers, liberada/redirecionada para que outros peers consigam abrir conexões de entrada
-- **Dependências externas**: **nenhuma**. O projeto usa exclusivamente a biblioteca padrão do Go (`net`, `encoding/json`, `bufio`, `sync`, `time`, `crypto/rand`, etc.)
+- **Dependências externas**: `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/bubbles` e `github.com/charmbracelet/lipgloss` (TUI). O restante usa exclusivamente a biblioteca padrão do Go (`net`, `encoding/json`, `bufio`, `sync`, `time`, `crypto/rand`, etc.). As dependências são gerenciadas por `go.mod` e baixadas automaticamente no primeiro build.
 
 ### Instalando o Go (se necessário)
 
@@ -105,84 +102,43 @@ go version
 
 ## Estrutura do projeto
 
-```
-pyp2p-client/
-├── go.mod                  # módulo Go: "cliente-p2p"
-├── config.json             # configuração do peer local (editar antes de rodar)
-├── main.go                 # ponto de entrada: inicialização e wiring de todos os pacotes
-│
-├── protocolo/              # tipos de mensagens trocadas com o Rendezvous e entre peers
-│   └── mensagens.go
-│
-├── configuracao/           # leitura e validação do config.json
-│   └── configuracao.go
-│
-├── registro/                # logger com níveis ajustáveis em runtime (DEBUG/INFO/WARN/ERROR)
-│   └── registro.go
-│
-├── peer/                    # estruturas de uma conexão com um peer e suas coleções
-│   ├── conexao.go          # ConexaoPeer: socket + canais + RTT + ACKs pendentes
-│   ├── gerenciador.go       # GerenciadorConexoes: mapa de conexões ativas (thread-safe)
-│   └── tabela.go            # TabelaPeers: peers conhecidos via Rendezvous (ATIVO/OBSOLETO)
-│
-├── rendezvous/              # cliente do protocolo Rendezvous
-│   └── cliente.go            # REGISTER, DISCOVER, UNREGISTER
-│
-├── roteador/                # envio/recebimento de mensagens de aplicação
-│   └── roteador.go           # SEND/ACK, PUB, tratamento de mensagens recebidas
-│
-├── rede/                     # comunicação P2P de baixo nível
-│   ├── servidor.go            # aceita conexões TCP entrantes (handshake HELLO/HELLO_OK)
-│   ├── conector.go            # abre conexões de saída com peers ativos (backoff exponencial)
-│   ├── leitor.go              # loop de leitura por conexão + despacho por tipo de mensagem
-│   └── manutencao.go          # keep-alive PING/PONG e cálculo de RTT
-│
-├── descoberta/               # descoberta periódica de peers
-│   └── descoberta.go          # loop DISCOVER a cada 60s, atualiza TabelaPeers
-│
-└── cli/                       # interface de linha de comando interativa
-    └── cli.go                 # /peers, /msg, /pub, /conn, /rtt, /reconnect, /log, /quit
-```
+| Diretorio / Arquivo | Descricao |
+|---|---|
+| `go.mod` | modulo Go: "cliente-p2p" |
+| `config.json` | configuracao do peer local (editar antes de rodar) |
+| `main.go` | ponto de entrada: inicializacao e wiring de todos os pacotes |
+| `protocolo/mensagens.go` | tipos de mensagens trocadas com o Rendezvous e entre peers |
+| `configuracao/configuracao.go` | leitura e validacao do config.json |
+| `registro/registro.go` | logger com niveis ajustaveis em runtime (DEBUG/INFO/WARN/ERROR) |
+| `peer/conexao.go` | `ConexaoPeer`: socket + canais + RTT + ACKs pendentes |
+| `peer/gerenciador.go` | `GerenciadorConexoes`: mapa de conexoes ativas (thread-safe) |
+| `peer/tabela.go` | `TabelaPeers`: peers conhecidos via Rendezvous (ATIVO/OBSOLETO) |
+| `rendezvous/cliente.go` | cliente do protocolo Rendezvous: REGISTER, DISCOVER, UNREGISTER |
+| `roteador/roteador.go` | envio/recebimento de mensagens de aplicacao: SEND/ACK, PUB |
+| `rede/servidor.go` | aceita conexoes TCP entrantes (handshake HELLO/HELLO_OK) |
+| `rede/conector.go` | abre conexoes de saida com peers ativos (backoff exponencial) |
+| `rede/leitor.go` | loop de leitura por conexao + despacho por tipo de mensagem |
+| `rede/manutencao.go` | keep-alive PING/PONG e calculo de RTT |
+| `descoberta/descoberta.go` | descoberta periodica de peers: loop DISCOVER a cada 60s, atualiza TabelaPeers |
+| `ui/ui.go` | camada de saida, abstrai TUI e fallback ANSI: MsgUI, EnviarMsg, RegistrarPeer, LogWriter |
+| `cli/cli.go` | interface TUI interativa: /peers, /msg, /pub, /conn, /reconnect, /help, /quit |
+| `cli/tui.go` | modelo bubbletea: 3 colunas, viewports, estilos lipgloss |
 
 ### Grafo de dependências entre pacotes
 
 A organização em pacotes segue uma estrutura em camadas, sem dependências circulares:
 
-```
-protocolo  configuracao  registro      (camada base, sem dependências entre si)
-    │            │           │
-    └─────┬──────┴─────┬─────┘
-          ▼             ▼
-        peer  ◄─────────┘
-          │
-    ┌─────┼──────────────┐
-    ▼     ▼              ▼
-rendezvous  roteador      (usam peer, protocolo, configuracao)
-    │         │
-    └────┬────┘
-         ▼
-       rede               (usa peer, roteador, protocolo, configuracao, registro)
-         │
-         ▼
-    descoberta            (usa rede, rendezvous, peer, protocolo, configuracao)
-         │
-         ▼
-       cli                (usa todos os pacotes acima)
-         │
-         ▼
-      main.go             (monta e inicia tudo)
-```
+![Grafo de dependencias entre pacotes](docs/dependencias.svg)
 
 ---
 
 ## Compilação
 
 ```bash
-cd pyp2p-client
 go build -o cliente-p2p .
 ```
 
-Isso gera um binário estático `cliente-p2p` no diretório atual — não há nenhuma dependência externa para distribuir junto.
+Isso gera o binário `cliente-p2p` no diretório atual. As dependências TUI (bubbletea/bubbles/lipgloss) são baixadas automaticamente pelo `go build` na primeira vez; após isso ficam em cache local.
 
 Para verificar que o código está formatado corretamente e sem problemas comuns:
 
@@ -212,9 +168,9 @@ Antes de executar, edite o arquivo `config.json` com os dados do seu peer:
 
 | Campo | Tipo | Obrigatório | Padrão (se omitido) | Descrição |
 |---|---|---|---|---|
-| `nome` | string | sim | — | Nome do peer dentro do namespace. Combinado com `namespace`, forma o identificador completo `nome@namespace` (ex.: `alice@CIC`) |
-| `namespace` | string | sim | — | Grupo lógico de peers. Apenas peers do mesmo namespace se descobrem por padrão (`/peers` sem argumentos) |
-| `porta` | int | sim | — | Porta TCP local em que o servidor deste peer escuta conexões de entrada de outros peers |
+| `nome` | string | sim | - | Nome do peer dentro do namespace. Combinado com `namespace`, forma o identificador completo `nome@namespace` (ex.: `alice@CIC`) |
+| `namespace` | string | sim | - | Grupo lógico de peers. Apenas peers do mesmo namespace se descobrem por padrão (`/peers` sem argumentos) |
+| `porta` | int | sim | - | Porta TCP local em que o servidor deste peer escuta conexões de entrada de outros peers |
 | `ttl` | int | não | `3600` | Tempo de vida (em segundos) do registro deste peer no servidor Rendezvous, enviado no `REGISTER` |
 | `intervalo_ping_s` | int | não | `30` | Intervalo, em segundos, entre os `PING` de keep-alive enviados em cada conexão P2P ativa |
 | `max_tentativas_reconexao` | int | não | `5` | Número máximo de tentativas (com backoff exponencial: 1s, 2s, 4s, ...) ao tentar conectar a um peer descoberto |
@@ -222,9 +178,9 @@ Antes de executar, edite o arquivo `config.json` com os dados do seu peer:
 | `porta_rendezvous` | int | não | `8080` | Porta TCP do servidor Rendezvous |
 | `arquivo_log` | string | não | `""` (desativado) | Caminho do arquivo de log. Se preenchido, todos os eventos são gravados simultaneamente em stderr e no arquivo (modo append). Útil para inspecionar sessões após o encerramento |
 
-> A identidade completa do peer (`MeuID()` no código) é sempre `nome@namespace` — por exemplo, `alice@CIC`. É esse identificador que aparece em `/peers`, `/conn`, `/msg`, etc.
+> A identidade completa do peer (`MeuID()` no código) é sempre `nome@namespace`, por exemplo, `alice@CIC`. É esse identificador que aparece em `/peers`, `/conn`, `/msg`, etc.
 
-Para rodar múltiplos peers na mesma máquina (para teste local), crie um `config.json` por peer com `nome` e `porta` diferentes — veja [config_0.json](config_0.json) e [config_1.json](config_1.json), usados na seção [Testando localmente](#testando-localmente-dois-peers-na-mesma-máquina).
+Para rodar múltiplos peers na mesma máquina (para teste local), crie um `config.json` por peer com `nome` e `porta` diferentes (veja [config_0.json](config_0.json) e [config_1.json](config_1.json), usados na seção [Testando localmente](#testando-localmente-dois-peers-na-mesma-máquina)).
 
 ---
 
@@ -242,17 +198,21 @@ Para usar um arquivo de configuração com outro nome/local:
 ./cliente-p2p -config config-bob.json
 ```
 
-### Saída esperada na inicialização
+### Interface na inicialização
+
+Ao iniciar, o terminal entra em tela alternativa com o TUI de 3 colunas:
 
 ```
-[INFO]  10:00:01 [Rendezvous] registrado como alice@CIC (ip=200.1.2.3 port=4000 ttl=3600s)
-[INFO]  10:00:01 [Servidor] escutando em 0.0.0.0:4000
-Conectado como alice@CIC
-Comandos: /peers, /msg, /pub, /conn, /rtt, /reconnect, /log, /quit
+ P2P Chat - alice@CIC - porta 4000                          0 conectado(s)
+─────────────────────────────────────────────────────────────────────────
+ Comandos                    │ Mensagens                    │ Log
+
 >
+─────────────────────────────────────────────────────────────────────────
+> /help para listar comandos · ↑↓ histórico · Tab autocompleta · PgUp/PgDn rola
 ```
 
-A partir daqui o prompt `>` aceita os comandos descritos na próxima seção. Mensagens recebidas de outros peers (SEND, PUB, notificações de BYE) são impressas a qualquer momento, mesmo enquanto o prompt está esperando entrada.
+A coluna **Comandos** (esquerda) exibe a saída de `/peers`, `/conn`, `/help` e confirmações. A coluna **Mensagens** (centro) exibe mensagens SEND e PUB recebidas e enviadas. A coluna **Log** (direita) exibe eventos de sistema (conexão, desconexão, tentativas de reconexão) e os logs internos do cliente. O campo `>` na parte inferior aceita os comandos a qualquer momento.
 
 ### Encerrando o programa
 
@@ -266,7 +226,7 @@ Use `/quit` ou pressione `Ctrl+C` (SIGINT/SIGTERM). Em ambos os casos o cliente:
 
 ## Testando localmente (dois peers na mesma máquina)
 
-Para validar a comunicação P2P (handshake, PING/PONG, SEND/ACK, PUB, BYE) sem depender de outra máquina/rede, é preciso que **os dois peers fiquem registrados com o mesmo IP de origem** — caso contrário, ao tentar discar de volta para o IP público do servidor Rendezvous a partir da própria máquina ocorrem problemas de *NAT hairpin*. A solução é apontar ambos os clientes para um servidor Rendezvous **rodando localmente**: como ele enxerga a conexão TCP de cada cliente vindo de `127.0.0.1`, registra os dois peers com `ip: "127.0.0.1"`, permitindo que o `DISCOVER` resolva o endereço do outro peer para `127.0.0.1:<porta>` e a conexão P2P aconteça via loopback.
+Para validar a comunicação P2P (handshake, PING/PONG, SEND/ACK, PUB, BYE) sem depender de outra máquina/rede, é preciso que **os dois peers fiquem registrados com o mesmo IP de origem**; caso contrário, ao tentar discar de volta para o IP público do servidor Rendezvous a partir da própria máquina, ocorrem problemas de *NAT hairpin*. A solução é apontar ambos os clientes para um servidor Rendezvous **rodando localmente**: como ele enxerga a conexão TCP de cada cliente vindo de `127.0.0.1`, registra os dois peers com `ip: "127.0.0.1"`, permitindo que o `DISCOVER` resolva o endereço do outro peer para `127.0.0.1:<porta>` e a conexão P2P aconteça via loopback.
 
 ### 1. Suba o servidor Rendezvous de referência localmente
 
@@ -277,11 +237,11 @@ cd ../pyp2p-rdv/src/rendezvous
 python3 main.py --host 127.0.0.1 --port 8080
 ```
 
-Deixe esse processo rodando em um terminal — ele loga cada `REGISTER`/`DISCOVER`/`UNREGISTER` recebido.
+Deixe esse processo rodando em um terminal: ele loga cada `REGISTER`/`DISCOVER`/`UNREGISTER` recebido.
 
 ### 2. Use os arquivos de configuração de exemplo
 
-O projeto já inclui dois arquivos prontos para esse cenário, [config_0.json](config_0.json) e [config_1.json](config_1.json) — mesmo `namespace` (`"teste"`), nomes e portas diferentes (4000/4001), ambos apontando `endereco_rendezvous`/`porta_rendezvous` para `127.0.0.1:8080`:
+Crie dois arquivos de configuração com o mesmo `namespace` (`"teste"`), nomes e portas diferentes (4000/4001), ambos apontando `endereco_rendezvous`/`porta_rendezvous` para `127.0.0.1:8080`:
 
 ```json
 {
@@ -329,7 +289,7 @@ A descoberta automática (a cada 60s) já dispara a conexão P2P sozinha, mas `/
 
 No terminal do `teste_1` a mensagem direta e o broadcast aparecem automaticamente, sem precisar de comando.
 
-> **Nota:** os comandos acima usam `127.0.0.1`, então **não funcionam** se `config_0.json`/`config_1.json` apontarem para o servidor Rendezvous público (`45.171.101.167:8080`) — nesse caso o servidor veria ambos os clientes chegando do mesmo IP público, mas cada um tentaria discar de volta para esse IP público (e não para `127.0.0.1`), o que normalmente falha por NAT hairpin/loopback bloqueado.
+> **Nota:** os comandos acima usam `127.0.0.1`, então **não funcionam** se `config_0.json`/`config_1.json` apontarem para o servidor Rendezvous público (`45.171.101.167:8080`), já que nesse caso o servidor veria ambos os clientes chegando do mesmo IP público, mas cada um tentaria discar de volta para esse IP público (e não para `127.0.0.1`), o que normalmente falha por NAT hairpin/loopback bloqueado.
 
 ---
 
@@ -340,16 +300,55 @@ No terminal do `teste_1` a mensagem direta e o broadcast aparecem automaticament
 | `/peers` | Executa `DISCOVER` no Rendezvous e lista os peers do **mesmo namespace** configurado |
 | `/peers *` | Lista peers de **todos** os namespaces |
 | `/peers #<namespace>` | Lista peers de um namespace específico (ex.: `/peers #ECO`) |
-| `/msg <peer_id> <mensagem>` | Envia uma mensagem direta (`SEND`) para `<peer_id>` (ex.: `bob@CIC`), exigindo confirmação (`ACK`) |
+| `/msg <peer_id|numero> <mensagem>` | Envia uma mensagem direta (`SEND`) para `<peer_id>` ou pelo número de atalho, exigindo confirmação (`ACK`) |
 | `/pub * <mensagem>` | Envia uma mensagem de broadcast (`PUB`) para **todas** as conexões ativas |
 | `/pub #<namespace> <mensagem>` | Envia `PUB` apenas para conexões cujo peer pertence a `<namespace>` |
-| `/conn` | Lista as conexões P2P ativas, sua direção (`entrada`/`saida`) e o RTT medido |
-| `/rtt` | Exibe o RTT médio (ms) medido para cada conexão ativa |
-| `/reconnect` | Força uma reconciliação imediata (sem esperar o próximo ciclo de 30s do conector) |
-| `/log <nível>` | Altera o nível de log em tempo de execução: `DEBUG`, `INFO`, `WARN` ou `ERROR` |
-| `/quit` | Envia `BYE`/aguarda `BYE_OK` de cada peer, desregistra do Rendezvous e finaliza |
+| `/conn` | Lista as conexões P2P ativas, direção (`entrada`/`saida`), IP, tempo conectado e RTT |
+| `/reconnect` | Executa `DISCOVER` e força reconciliação imediata com todos os peers ativos |
+| `/help` | Exibe tabela de comandos com sintaxe e exemplos na coluna Comandos |
+| `/quit` | Envia `BYE`/aguarda `BYE_OK` de cada peer, desregistra do Rendezvous e encerra o TUI |
 
-`peer_id` sempre tem o formato `nome@namespace`, exatamente como exibido por `/peers` e `/conn`.
+`peer_id` sempre tem o formato `nome@namespace`, exatamente como exibido por `/peers` e `/conn`. Os números de atalho (`[1]`, `[2]`...) são atribuídos na ordem em que os peers aparecem e persistem durante a sessão. Tab autocompleta IDs após `/msg`.
+
+---
+
+## Interface TUI
+
+O cliente usa [bubbletea](https://github.com/charmbracelet/bubbletea) com tela alternativa (`tea.WithAltScreen()`), dividida em três colunas e uma barra de status fixa:
+
+```
+ P2P Chat - alice@CIC - porta 4000                          3 conectado(s)
+─────────────────────────────────────────────────────────────────────────
+ Comandos                    │ Mensagens                    │ Log
+                             │                              │
+ ─ /peers ────────────────   │  10:12 [1] bob@CIC: oi!     │  10:12 * [1] bob@CIC conectou
+ [1] bob@CIC  127.0.0.1:4001 │  10:13 você → [1] bob: ola  │  10:12 * [2] carol@CIC conectou
+ [2] carol@CIC 127.0.0.1:4002│                              │  [WARN] Conector: tentativa 1/5
+ Use /msg <numero> ...        │                              │
+─────────────────────────────────────────────────────────────────────────
+> /msg 1 ola
+```
+
+### Roteamento de mensagens por coluna
+
+| Tipo de mensagem | Coluna |
+|---|---|
+| Saída de comandos (`/peers`, `/conn`, `/help`, `/reconnect`, `/pub`) | **Comandos** (esquerda) |
+| Separador de comando (`─ /peers ──────`) | **Comandos** (esquerda); não aparece em caso de erro |
+| Mensagens recebidas (SEND, PUB) e enviadas | **Mensagens** (centro) |
+| Eventos de sistema (conexão, desconexão, ACK, falha) | **Log** (direita) |
+| Logs internos (WARN, ERROR do pacote `registro`) | **Log** (direita) |
+| Erros de comando (argumento inválido, peer não encontrado) | **Log** (direita) |
+
+### Atalhos de teclado
+
+| Tecla | Ação |
+|---|---|
+| `Enter` | Executa o comando digitado |
+| `↑` / `↓` | Navega no histórico de comandos |
+| `Tab` | Autocompleta comandos e IDs de peer (cicla entre candidatos) |
+| `PgUp` / `PgDn` | Rola a coluna Mensagens |
+| `Ctrl+C` | Encerramento limpo (BYE + UNREGISTER) |
 
 ---
 
@@ -361,72 +360,34 @@ No terminal do `teste_1` a mensagem direta e o broadcast aparecem automaticament
 |---|---|
 | `protocolo` | Define todas as structs de mensagens (Rendezvous e P2P) e a função `GerarIDMensagem()` (UUID v4 para `msg_id`) |
 | `configuracao` | Struct `Configuracao`, função `CarregarConfiguracao` (lê `config.json` e aplica padrões) e `MeuID()` |
-| `registro` | Logger com níveis (`Depurar`, `Informar`, `Alertar`, `Erro`) e `DefinirNivel` para alterar o nível em runtime |
+| `registro` | Logger com níveis (`Depurar`, `Informar`, `Alertar`, `Erro`) e `DefinirNivel` para alterar o nível; `SilenciarTerminal` redireciona saída para o TUI |
 | `peer` | `ConexaoPeer` (uma conexão TCP + canais + RTT + ACKs pendentes), `GerenciadorConexoes` (mapa de conexões ativas) e `TabelaPeers` (peers conhecidos via Rendezvous) |
-| `rendezvous` | `ClienteRendezvous`: `Registrar`, `Descobrir`, `Desregistrar` — uma conexão TCP nova por comando — e `IniciarRenovacaoPeriodica`, que renova o registro (TTL) periodicamente |
+| `rendezvous` | `ClienteRendezvous`: `Registrar`, `Descobrir`, `Desregistrar` (uma conexão TCP nova por comando) e `IniciarRenovacaoPeriodica`, que renova o registro (TTL) periodicamente |
 | `roteador` | `Roteador`: `Enviar` (SEND+ACK), `Publicar` (PUB), `TratarMensagemRecebida`, `TratarPublicacaoRecebida` |
 | `rede` | `Servidor` (aceita conexões entrantes + handshake), `Conector` (abre conexões de saída + backoff), funções internas `iniciarLeitor` (loop de leitura/despacho) e `iniciarManutencaoConexao` (PING/PONG), e `EnviarTchau` (BYE/BYE_OK) |
 | `descoberta` | `IniciarLoopDescoberta`: chama `Descobrir` a cada 60s e atualiza a `TabelaPeers` |
-| `cli` | Interface interativa de linha de comando |
+| `ui` | Camada de saída unificada: `MsgUI`, `EnviarMsg` (roteia ao TUI ou fallback ANSI), `RegistrarPeer`/`ResolverPeer` (numeração de peers) e `LogWriter` (io.Writer que envia linhas para a coluna Log) |
+| `cli` | TUI bubbletea de 3 colunas (`tui.go`) + processamento de comandos (`cli.go`) |
 | `main` | Monta as dependências e inicia tudo |
 
 ### Fluxo de dados
 
-```
-                              ┌──────────┐
-                              │ main.go  │  carrega config, monta dependências
-                              └────┬─────┘
-        ┌───────────────────┬─────┴──────────────┬──────────────────┐
-        ▼                    ▼                    ▼                  ▼
-┌────────────────┐  ┌────────────────┐  ┌──────────────────┐  ┌────────────┐
-│ rendezvous      │  │ rede.Servidor  │  │ rede.Conector     │  │ descoberta │
-│ Registrar()     │  │ aceita TCP     │  │ conecta a peers   │  │ DISCOVER   │
-│ Descobrir()     │  │ entrante       │  │ ATIVOS (backoff)  │  │ a cada 60s │
-│ Desregistrar()  │  └───────┬────────┘  └────────┬──────────┘  └─────┬──────┘
-└────────┬────────┘          │ HELLO/             │ HELLO/             │
-         │              HELLO_OK              HELLO_OK                 │
-         │                   └─────────┬──────────┘                    │
-         │                             ▼                                │
-         │                  ┌────────────────────────┐                 │
-         │                  │   peer.ConexaoPeer       │                │
-         │                  │   (uma por peer ativo)   │                │
-         │                  │                          │                │
-         │                  │  ┌──────────────┐ ┌────────────────┐    │
-         │                  │  │ iniciarLeitor │ │ iniciarManutencao│   │
-         │                  │  │ (rede/leitor) │ │ (rede/manutencao)│   │
-         │                  │  │ despacha por  │ │ PING/PONG + RTT  │   │
-         │                  │  │ tipo de msg   │ └─────────────────┘    │
-         │                  │  └──────┬────────┘                        │
-         │                  └─────────┼─────────────────────────────────┘
-         │                            ▼
-         │                  ┌────────────────────┐
-         │                  │ roteador.Roteador   │  SEND/ACK/PUB
-         │                  └─────────┬───────────┘
-         │                            ▼
-         │                  ┌────────────────────┐
-         │                  │     cli.CLI         │  stdin/stdout
-         │                  └────────────────────┘
-         │
-         ▼
-┌──────────────────────┐
-│  peer.TabelaPeers     │  ATIVO / OBSOLETO, alimentada pela `descoberta`
-└──────────────────────┘
-```
+![Fluxo de dados entre pacotes](docs/fluxo_dados.svg)
 
 ---
 
 ## Protocolos
 
-### Rendezvous (uma conexão TCP nova por comando — implementado em `rendezvous/cliente.go`)
+### Rendezvous (uma conexão TCP nova por comando, implementado em `rendezvous/cliente.go`)
 
-**REGISTER** — executado uma vez na inicialização (`main.go` → `rdv.Registrar()`):
+**REGISTER**, executado uma vez na inicialização (`main.go` → `rdv.Registrar()`):
 
 ```
 → {"type":"REGISTER","namespace":"CIC","name":"alice","port":4000,"ttl":3600}
 ← {"status":"OK","ttl":3600,"ip":"200.1.2.3","port":4000}
 ```
 
-**DISCOVER** — executado a cada 60s pelo pacote `descoberta` e também pelo comando `/peers`:
+**DISCOVER**, executado a cada 60s pelo pacote `descoberta` e também pelo comando `/peers`:
 
 ```
 → {"type":"DISCOVER","namespace":"CIC"}
@@ -435,27 +396,27 @@ No terminal do `teste_1` a mensagem direta e o broadcast aparecem automaticament
 
 Se `namespace` for omitido, o servidor retorna peers de todos os namespaces (usado por `/peers *`).
 
-**UNREGISTER** — executado no `/quit` e no SIGINT/SIGTERM (`cli.comandoSair` / handler de sinal em `main.go`):
+**UNREGISTER**, executado no `/quit` e no SIGINT/SIGTERM (`cli.comandoSair` / handler de sinal em `main.go`):
 
 ```
 → {"type":"UNREGISTER","namespace":"CIC","name":"alice","port":4000}
 ← {"status":"OK"}
 ```
 
-**Renovação periódica do registro (REGISTER)** — para sessões mais longas que `ttl`, `rendezvous.ClienteRendezvous.IniciarRenovacaoPeriodica` (iniciada em goroutine própria por `main.go`) reenvia o mesmo `REGISTER` periodicamente, evitando que o registro expire e seja descartado pelo servidor. O intervalo é `ttl/2` (ou `ttl-60`, o que for menor), com variação aleatória de ±10%; em caso de falha, tenta novamente com backoff exponencial (5s, 10s, 20s, ... até 60s).
+**Renovação periódica do registro (REGISTER)**: para sessões mais longas que `ttl`, `rendezvous.ClienteRendezvous.IniciarRenovacaoPeriodica` (iniciada em goroutine própria por `main.go`) reenvia o mesmo `REGISTER` periodicamente, evitando que o registro expire e seja descartado pelo servidor. O intervalo é `ttl/2` (ou `ttl-60`, o que for menor), com variação aleatória de ±10%; em caso de falha, tenta novamente com backoff exponencial (5s, 10s, 20s, ... até 60s).
 
 ---
 
-### P2P entre peers (conexão TCP persistente — implementado em `rede/` e `peer/`)
+### P2P entre peers (conexão TCP persistente, implementado em `rede/` e `peer/`)
 
-**HELLO / HELLO_OK** — handshake ao estabelecer a conexão (`rede.Servidor.tratarConexaoEntrante` / `rede.Conector.conectarAoPeer`):
+**HELLO / HELLO_OK**, handshake ao estabelecer a conexão (`rede.Servidor.tratarConexaoEntrante` / `rede.Conector.conectarAoPeer`):
 
 ```
 → {"type":"HELLO","peer_id":"alice@CIC","version":"1.0","features":["ack","metrics"],"ttl":1}
 ← {"type":"HELLO_OK","peer_id":"bob@CIC","version":"1.0","features":["ack","metrics"],"ttl":1}
 ```
 
-**PING / PONG** — keep-alive a cada `intervalo_ping_s` segundos (`rede/manutencao.go`):
+**PING / PONG**, keep-alive a cada `intervalo_ping_s` segundos (`rede/manutencao.go`):
 
 ```
 → {"type":"PING","msg_id":"a1b2-...","timestamp":"2026-06-13T10:00:00Z","ttl":1}
@@ -464,7 +425,7 @@ Se `namespace` for omitido, o servidor retorna peers de todos os namespaces (usa
 
 O RTT é calculado com média móvel exponencial em `ConexaoPeer.AtualizarRTT`: `rttMedio = 0.8 × rttMedio + 0.2 × rttNovo`. Se o `PONG` correspondente não chegar em 10 segundos, a conexão é encerrada.
 
-**SEND / ACK** — mensagem direta com confirmação (`roteador.Enviar`, processado em `rede/leitor.go`):
+**SEND / ACK**, mensagem direta com confirmação (`roteador.Enviar`, processado em `rede/leitor.go`):
 
 ```
 → {"type":"SEND","msg_id":"e5f6-...","src":"alice@CIC","dst":"bob@CIC","payload":"oi!","require_ack":true,"ttl":1}
@@ -473,14 +434,14 @@ O RTT é calculado com média móvel exponencial em `ConexaoPeer.AtualizarRTT`: 
 
 Se o `ACK` não chegar em 5 segundos, um aviso é registrado no log e a espera é cancelada.
 
-**PUB** — broadcast/namespace-cast sem confirmação (`roteador.Publicar`):
+**PUB**, broadcast/namespace-cast sem confirmação (`roteador.Publicar`):
 
 ```
 → {"type":"PUB","msg_id":"g7h8-...","src":"alice@CIC","dst":"#CIC","payload":"reunião às 14h","require_ack":false,"ttl":1}
 → {"type":"PUB","msg_id":"i9j0-...","src":"alice@CIC","dst":"*","payload":"aviso global","require_ack":false,"ttl":1}
 ```
 
-**BYE / BYE_OK** — encerramento controlado de uma conexão (`rede.EnviarTchau`, processado em `rede/leitor.go`):
+**BYE / BYE_OK**, encerramento controlado de uma conexão (`rede.EnviarTchau`, processado em `rede/leitor.go`):
 
 ```
 → {"type":"BYE","msg_id":"k1l2-...","src":"alice@CIC","dst":"bob@CIC","reason":"encerrando sessão","ttl":1}
@@ -624,17 +585,8 @@ Cada conexão ativa roda duas goroutines independentes (`iniciarLeitor` e `inici
 | `chan struct{}` (mapa `esperasConfirmacao`) | `ConexaoPeer.RegistrarEsperaConfirmacao` / `ConfirmarRecebimento` | Sinaliza `roteador.Enviar` quando o `ACK` de uma mensagem `SEND` é recebido |
 | `chan struct{}` | `Conector.canalDisparo` | Permite que `/peers`, `/reconnect` e a `descoberta` disparem uma reconciliação imediata sem bloquear se já houver uma pendente |
 
-A regra seguida é a do próprio Go: *não compartilhe memória para comunicar — comunique para compartilhar memória*.
+A regra seguida é a do próprio Go: *não compartilhe memória para comunicar; comunique para compartilhar memória*.
 
 ---
 
-## Solução de problemas
-
-| Sintoma | Causa provável | Solução |
-|---|---|---|
-| `erro ao carregar configuração: open config.json: no such file or directory` | O binário foi executado fora do diretório que contém `config.json` | Execute a partir do diretório correto ou use `-config /caminho/para/config.json` |
-| `falha ao registrar no rendezvous: conexão: dial tcp ...: connect: connection refused` | `endereco_rendezvous`/`porta_rendezvous` incorretos ou servidor fora do ar | Verifique os valores em `config.json` e a conectividade com `telnet <host> <porta>` |
-| `falha ao iniciar servidor: listen tcp :PORTA: bind: address already in use` | Outra instância (ou processo) já está usando a porta configurada | Altere `porta` em `config.json` ou finalize o processo que está usando a porta |
-| `/peers` não lista nenhum peer | Nenhum outro peer registrado no mesmo namespace, ou peers expiraram (`ttl`) | Confirme que outros peers estão executando com o mesmo `namespace` e que o `REGISTER` deles foi bem-sucedido |
-| `/msg` retorna `sem conexão com <peer_id>` | Ainda não há conexão TCP estabelecida com aquele peer | Execute `/peers` seguido de `/reconnect` para forçar a descoberta/conexão, e aguarde o handshake `HELLO/HELLO_OK` |
-| Conexão cai e não reconecta | `max_tentativas_reconexao` esgotado | Use `/reconnect` para forçar uma nova rodada de tentativas, ou aumente `max_tentativas_reconexao` em `config.json` |
+> Documentacao gerada com auxilio de IA.
